@@ -12,19 +12,29 @@ from ui.core_bridge import (
     HAS_CLIENT,
     HAS_FFMPEG_TOOL,
     HAS_RECORDER,
+    HAS_VELOPACK,
     Course,
     Lesson,
     PuduFuClient,
     Recorder,
+    current_version,
     find_ffmpeg,
+    get_package_version,
     install_ffmpeg,
 )
 from ui.courses_view import build_course_list_view, build_error_view, build_loading_view
-from ui.demo_data import DemoClient, DemoRecorder, demo_find_ffmpeg, demo_install_ffmpeg
+from ui.demo_data import (
+    DemoClient,
+    DemoRecorder,
+    demo_current_version,
+    demo_find_ffmpeg,
+    demo_install_ffmpeg,
+)
 from ui.ffmpeg_view import build_ffmpeg_missing_view
 from ui.lesson_select_view import LessonSelectScreen
 from ui.login_view import build_login_view
 from ui.progress_view import ProgressScreen
+from ui.update_manager import UpdateManager
 
 DEFAULT_OUTPUT_DIR = Path.home() / "Downloads" / "프드프강의"
 
@@ -50,10 +60,14 @@ class App:
         self.ffmpeg: Path | None = None
         self.ffprobe: Path | None = None
 
+        # 진행 중인 강의 다운로드가 있는지 추적 (업데이트 재시작 권유 여부 판단용).
+        self._current_progress_screen: ProgressScreen | None = None
+
         self._setup_page()
 
         self.file_picker = ft.FilePicker()
         self.prefs = ft.SharedPreferences()
+        self.update_manager = UpdateManager(self)
 
         if demo:
             self.client = DemoClient()
@@ -74,18 +88,54 @@ class App:
         self.page.padding = 24
         self.page.theme_mode = ft.ThemeMode.SYSTEM
 
+        # 화면 전환 시에도 업데이트 배너가 사라지지 않도록, 배너 자리와 화면 자리를
+        # 분리된 슬롯으로 두고 show_view()/show_banner()는 각자의 슬롯만 갱신한다.
+        self._banner_slot = ft.Container(visible=False)
+        self._content_slot = ft.Container(expand=True)
+        self.page.controls = [self._banner_slot, self._content_slot]
+
     def show_view(self, control: ft.Control) -> None:
-        self.page.controls.clear()
-        self.page.controls.append(control)
+        self._content_slot.content = control
         self.page.update()
+
+    def show_banner(self, control: ft.Control) -> None:
+        self._banner_slot.content = control
+        self._banner_slot.visible = True
+        self.page.update(self._banner_slot)
+
+    def hide_banner(self) -> None:
+        self._banner_slot.visible = False
+        self.page.update(self._banner_slot)
 
     def show_snack_bar(self, message: str) -> None:
         self.page.show_dialog(ft.SnackBar(content=ft.Text(message), open=True))
+
+    def is_download_active(self) -> bool:
+        """강의 다운로드가 진행 중이면 True (업데이트 재시작을 미루기 위한 판단용)."""
+        screen = self._current_progress_screen
+        return screen is not None and screen.last_summary is None
+
+    def get_display_version(self) -> str:
+        """로그인 화면 등에 표시할 버전 문자열. 설치판이 아니면 패키지 버전으로 대신한다."""
+        if self.demo:
+            return demo_current_version() or get_package_version()
+        if HAS_VELOPACK:
+            try:
+                version = current_version()
+                if version:
+                    return version
+            except Exception:  # noqa: BLE001
+                pass
+        return get_package_version()
 
     # ------------------------------------------------------------------
     # 시작 흐름: ffmpeg 확인 -> 로그인
     # ------------------------------------------------------------------
     async def start(self) -> None:
+        # 대기 중인 업데이트 적용/정리는 앱 시작과 동시에 백그라운드로 흘려보낸다.
+        # (실패해도 무시되고, 나머지 시작 흐름을 막지 않는다)
+        self.page.run_task(self.update_manager.run_startup_maintenance)
+
         if self.client is None and not self.demo:
             self.show_view(
                 build_error_view(
@@ -102,6 +152,8 @@ class App:
             return
 
         await self.show_login()
+        # 새 버전 확인도 백그라운드로: 있으면 상단 배너로 조용히 알린다.
+        self.page.run_task(self.update_manager.check_in_background)
 
     async def _check_ffmpeg(self) -> None:
         find_fn = demo_find_ffmpeg if self.demo else find_ffmpeg
@@ -290,4 +342,4 @@ class App:
             self.show_snack_bar("코어 모듈(pudufu.recorder)을 아직 찾을 수 없습니다.")
             return
 
-        ProgressScreen(self, course, lessons, recorder, self.output_dir)
+        self._current_progress_screen = ProgressScreen(self, course, lessons, recorder, self.output_dir)

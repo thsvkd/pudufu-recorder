@@ -180,3 +180,52 @@ class DemoRecorder:
             failed=counters["failed"],
             errors=errors,
         )
+
+
+# ----------------------------------------------------------------------
+# 자동 업데이트(Velopack) 데모 시나리오
+# ----------------------------------------------------------------------
+class DemoUpdateInfo:
+    """pudufu.velopack_update.check() 가 반환하는 UpdateInfo 를 흉내 낸 가짜 객체."""
+
+    def __init__(self, version: str) -> None:
+        self.version = version
+
+
+_DEMO_CURRENT_VERSION = "1.0.0"
+_DEMO_NEW_VERSION = "1.1.0"
+
+
+def demo_run_startup_maintenance() -> None:
+    time.sleep(0.1)
+
+
+def demo_is_installed() -> bool:
+    # 데모에서는 배포판(설치된 앱)인 것처럼 흉내 내어 업데이트 UI 시나리오를 태워본다.
+    return True
+
+
+def demo_current_version() -> str | None:
+    return _DEMO_CURRENT_VERSION
+
+
+def demo_check_update() -> DemoUpdateInfo | None:
+    time.sleep(0.5)
+    return DemoUpdateInfo(_DEMO_NEW_VERSION)
+
+
+def demo_target_version(info: DemoUpdateInfo) -> str:
+    return info.version
+
+
+def demo_download_update(info: DemoUpdateInfo, progress_cb: Callable[[float], None] | None = None) -> None:
+    for i in range(1, 11):
+        time.sleep(0.15)
+        if progress_cb:
+            progress_cb(i / 10)
+
+
+def demo_apply_and_restart(info: DemoUpdateInfo) -> None:
+    # 실제로는 앱을 재시작하며 돌아오지 않지만, 데모에서 재시작해버리면 이후 화면을
+    # 계속 확인할 수 없으므로 여기서는 아무 것도 하지 않는다 (호출부에서 안내만 표시).
+    pass

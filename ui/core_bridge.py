@@ -42,6 +42,50 @@ except ImportError:
     HAS_RECORDER = False
     Recorder = None  # type: ignore[assignment,misc]
 
+try:
+    from pudufu.velopack_update import REPO_URL
+    from pudufu.velopack_update import apply_and_restart
+    from pudufu.velopack_update import check as check_update
+    from pudufu.velopack_update import current_version
+    from pudufu.velopack_update import download as download_update
+    from pudufu.velopack_update import is_installed
+    from pudufu.velopack_update import run_startup_maintenance
+    from pudufu.velopack_update import target_version
+
+    HAS_VELOPACK = True
+except ImportError:
+    HAS_VELOPACK = False
+    REPO_URL = None  # type: ignore[assignment]
+
+    def run_startup_maintenance() -> None:
+        """코어 미구현 시 사용하는 자리표시자. 아무 것도 하지 않는다."""
+
+    def is_installed() -> bool:
+        return False
+
+    def current_version() -> str | None:
+        return None
+
+    def check_update():  # type: ignore[no-untyped-def]
+        return None
+
+    def target_version(info) -> str:  # type: ignore[no-untyped-def]
+        return ""
+
+    def download_update(info, progress_cb=None) -> None:  # type: ignore[no-untyped-def]
+        """코어 미구현 시 사용하는 자리표시자."""
+
+    def apply_and_restart(info) -> None:  # type: ignore[no-untyped-def]
+        """코어 미구현 시 사용하는 자리표시자."""
+
+
+def get_package_version() -> str:
+    """비설치 실행 등 current_version()이 없을 때 표시할 패키지 버전 폴백."""
+    import pudufu
+
+    return getattr(pudufu, "__version__", "dev")
+
+
 __all__ = [
     "Course",
     "Lesson",
@@ -56,4 +100,14 @@ __all__ = [
     "HAS_CLIENT",
     "HAS_FFMPEG_TOOL",
     "HAS_RECORDER",
+    "REPO_URL",
+    "run_startup_maintenance",
+    "is_installed",
+    "current_version",
+    "check_update",
+    "target_version",
+    "download_update",
+    "apply_and_restart",
+    "get_package_version",
+    "HAS_VELOPACK",
 ]
