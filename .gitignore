@@ -1,0 +1,19 @@
+# 계정 정보 — 절대 커밋하지 않는다
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# 빌드 산출물
+build/
+dist/
+
+# 앱이 저장한 강의 영상
+recordings/
+
+# 도구
+.omc/
+node_modules/
