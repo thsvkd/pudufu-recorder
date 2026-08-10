@@ -114,16 +114,16 @@ def remote_has_commit(sha: str) -> bool:
     return proc.returncode == 0 and bool(proc.stdout.strip())
 
 
-def tag_commit(tag: str) -> str | None:
-    """``tag``가 가리키는 커밋 SHA. 확인할 수 없으면 ``None``.
+def resolve_commit(ref: str) -> str | None:
+    """``ref``(태그·브랜치·SHA)가 가리키는 커밋 SHA. 확인할 수 없으면 ``None``.
 
     로컬 git이 아니라 GitHub 쪽에 묻는다. 첫 번째 플랫폼이 만든 태그는 두 번째 플랫폼의
     로컬 저장소에 ``git fetch`` 전까지 존재하지 않아서, 로컬만 보면 "태그를 못 찾음"을
     "커밋이 다름"으로 오판한다. ``commits/<ref>`` 엔드포인트는 경량·주석 태그를 모두
-    커밋으로 풀어 주므로 태그 종류를 따질 필요가 없다.
+    커밋으로 풀어 주므로 ref 종류를 따질 필요가 없다.
     """
     proc = subprocess.run(
-        ["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{tag}", "--jq", ".sha"],
+        ["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{ref}", "--jq", ".sha"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -131,6 +131,32 @@ def tag_commit(tag: str) -> str | None:
     if proc.returncode != 0:
         return None
     return proc.stdout.strip() or None
+
+
+def tag_commit(tag: str) -> str | None:
+    """릴리스 ``tag``가 가리키는 커밋 SHA. 확인할 수 없으면 ``None``.
+
+    **draft 릴리스에는 태그가 없다** — GitHub은 공개하는 시점에 태그를 만든다. 그런데 이
+    스크립트가 안내하는 절차는 첫 번째 플랫폼이 draft를 남기고 두 번째 플랫폼이 거기에
+    에셋을 덧붙이는 것이라, 태그 조회만으로는 두 번째 플랫폼에서 **항상** 실패한다.
+    그때는 릴리스가 기록해 둔 대상 커밋(``targetCommitish``)으로 대조한다 — 첫 번째
+    플랫폼이 ``--target <HEAD>``로 박아 둔 값이라 목적(두 플랫폼이 같은 커밋인지)에 맞다.
+    """
+    sha = resolve_commit(tag)
+    if sha is not None:
+        return sha
+    proc = subprocess.run(
+        ["gh", "release", "view", tag, "--json", "targetCommitish", "--jq", ".targetCommitish"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    target = proc.stdout.strip() if proc.returncode == 0 else ""
+    if not target:
+        return None
+    # targetCommitish는 SHA일 수도 브랜치 이름일 수도 있다. 같은 엔드포인트로 한 번 더
+    # 풀어 두면 어느 쪽이든 커밋 SHA로 맞춰진다.
+    return resolve_commit(target)
 
 
 def project_name() -> str:
