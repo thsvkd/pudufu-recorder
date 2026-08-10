@@ -13,7 +13,12 @@ from dotenv import load_dotenv
 
 from ui.app import App
 
-load_dotenv()
+# 패키징된 앱에는 .env가 없다. 인자 없는 load_dotenv()는 호출 스택을 거슬러
+# 파일을 찾는데, .pyc로 묶인 환경에서는 그 과정이 실패할 수 있어 경로를 명시한다.
+try:
+    load_dotenv(".env")
+except Exception:  # .env가 없거나 읽을 수 없어도 앱은 떠야 한다
+    pass
 
 
 def main(page: ft.Page) -> None:
@@ -21,5 +26,6 @@ def main(page: ft.Page) -> None:
     App(page, demo=demo)
 
 
-if __name__ == "__main__":
-    ft.run(main)
+# flet build로 패키징하면 이 모듈이 __main__으로 실행되지 않는다.
+# 가드를 두면 UI가 시작되지 않아 빈 창만 뜬다.
+ft.run(main)
