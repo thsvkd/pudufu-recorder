@@ -13,7 +13,9 @@ if TYPE_CHECKING:
     from ui.app import App
 
 
-def build_login_view(app: "App", initial_email: str, initial_password: str, remember: bool) -> ft.Control:
+def build_login_view(
+    app: App, initial_email: str, initial_password: str, remember: bool
+) -> ft.Control:
     email_field = ft.TextField(
         label="이메일",
         value=initial_email,

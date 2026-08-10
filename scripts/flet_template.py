@@ -38,7 +38,6 @@ macOS 러너에는 1)번 패치를 하지 않는다 — ``--veloapp-*`` 인자�
 
 from __future__ import annotations
 
-import hashlib
 import re
 import shutil
 import urllib.error

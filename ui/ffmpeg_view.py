@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from ui.app import App
 
 
-def build_ffmpeg_missing_view(app: "App") -> ft.Control:
+def build_ffmpeg_missing_view(app: App) -> ft.Control:
     return ft.Container(
         content=ft.Column(
             [
@@ -23,7 +23,9 @@ def build_ffmpeg_missing_view(app: "App") -> ft.Control:
                     color=ft.Colors.ON_SURFACE_VARIANT,
                 ),
                 ft.Container(
-                    content=ft.Text("brew install ffmpeg", selectable=True, font_family="monospace"),
+                    content=ft.Text(
+                        "brew install ffmpeg", selectable=True, font_family="monospace"
+                    ),
                     padding=12,
                     border_radius=8,
                     bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,

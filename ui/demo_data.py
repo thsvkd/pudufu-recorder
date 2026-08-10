@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from ui.core_bridge import Course, Lesson, LoginError, Progress, Summary
 
@@ -48,7 +48,10 @@ def make_demo_lessons(course: Course) -> list[Lesson]:
     all_unknown = course.course_id == _ALL_UNKNOWN_DURATION_COURSE_ID
     lessons: list[Lesson] = []
     idx = 0
-    for section_index, (section_title, count) in enumerate(zip(_SECTION_TITLES, _SECTION_COUNTS)):
+    # strict=True: 두 목록의 길이가 어긋나면 조용히 잘리는 대신 즉시 드러나게 한다.
+    for section_index, (section_title, count) in enumerate(
+        zip(_SECTION_TITLES, _SECTION_COUNTS, strict=True)
+    ):
         for i in range(count):
             has_known_duration = not all_unknown and idx % 5 != 0  # 5개 중 1개는 재생시간 정보 없음
             duration = 300 + (idx * 47) % 900 if has_known_duration else None
@@ -154,7 +157,9 @@ class DemoRecorder:
                         if cancel.is_set():
                             return
                         time.sleep(duration / steps)
-                        on_progress(Progress(lesson=lesson, stage=stage, percent=step / steps * 100))
+                        on_progress(
+                            Progress(lesson=lesson, stage=stage, percent=step / steps * 100)
+                        )
 
                 if lesson.lesson_id in fail_ids:
                     message = "데모 오류: 네트워크 응답 시간 초과"
@@ -218,7 +223,9 @@ def demo_target_version(info: DemoUpdateInfo) -> str:
     return info.version
 
 
-def demo_download_update(info: DemoUpdateInfo, progress_cb: Callable[[float], None] | None = None) -> None:
+def demo_download_update(
+    info: DemoUpdateInfo, progress_cb: Callable[[float], None] | None = None
+) -> None:
     for i in range(1, 11):
         time.sleep(0.15)
         if progress_cb:

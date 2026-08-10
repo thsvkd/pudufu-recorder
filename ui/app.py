@@ -10,7 +10,6 @@ import flet as ft
 
 from ui.core_bridge import (
     HAS_CLIENT,
-    HAS_FFMPEG_TOOL,
     HAS_RECORDER,
     HAS_VELOPACK,
     Course,
@@ -188,7 +187,9 @@ class App:
         dialog = ft.AlertDialog(
             modal=True,
             title=ft.Text("ffmpeg 설치 필요"),
-            content=ft.Text("영상 처리에 필요한 ffmpeg가 없습니다. 지금 자동으로 설치할까요? (약 80MB)"),
+            content=ft.Text(
+                "영상 처리에 필요한 ffmpeg가 없습니다. 지금 자동으로 설치할까요? (약 80MB)"
+            ),
             actions=[
                 ft.TextButton("아니요", on_click=on_no),
                 ft.ElevatedButton("예, 설치", on_click=on_yes),
@@ -342,4 +343,6 @@ class App:
             self.show_snack_bar("코어 모듈(pudufu.recorder)을 아직 찾을 수 없습니다.")
             return
 
-        self._current_progress_screen = ProgressScreen(self, course, lessons, recorder, self.output_dir)
+        self._current_progress_screen = ProgressScreen(
+            self, course, lessons, recorder, self.output_dir
+        )

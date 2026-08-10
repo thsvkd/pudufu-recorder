@@ -13,8 +13,8 @@ import stat
 import subprocess
 import sys
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import requests
 

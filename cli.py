@@ -7,12 +7,12 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import threading
 from pathlib import Path
 
 from dotenv import load_dotenv
-import os
 
 from pudufu.client import LoginError, PuduFuClient
 from pudufu.ffmpeg_tool import find_ffmpeg, install_ffmpeg
@@ -25,7 +25,9 @@ _print_lock = threading.Lock()
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="프드프 강의 1.5배속 다운로더 (CLI)")
     parser.add_argument("--course-id", help="처리할 강의 ID")
-    parser.add_argument("--limit", type=int, default=None, help="처리할 최대 강의 수(영상 있는 강의 기준)")
+    parser.add_argument(
+        "--limit", type=int, default=None, help="처리할 최대 강의 수(영상 있는 강의 기준)"
+    )
     parser.add_argument("--speed", type=float, default=1.5, help="배속 (기본 1.5)")
     parser.add_argument("--output", default="./pudufu_downloads", help="출력 디렉터리")
     parser.add_argument("--keep-original", action="store_true", help="원본 파일 보관")
@@ -82,7 +84,11 @@ def main() -> int:
                 if lesson.section_index != last_section:
                     print(f"  {lesson.section_title}")
                     last_section = lesson.section_index
-                duration = f"{lesson.duration_sec}초" if lesson.duration_sec is not None else "재생시간 정보 없음"
+                duration = (
+                    f"{lesson.duration_sec}초"
+                    if lesson.duration_sec is not None
+                    else "재생시간 정보 없음"
+                )
                 print(f"    - {lesson.title} ({duration})")
         return 0
 
@@ -106,7 +112,9 @@ def main() -> int:
     if ffmpeg_paths is None:
         print("ffmpeg를 찾을 수 없어 다운로드를 시도합니다...")
         ffmpeg_paths = install_ffmpeg(
-            on_progress=lambda ratio: print(f"\rffmpeg 다운로드 중... {ratio * 100:5.1f}%", end="", flush=True)
+            on_progress=lambda ratio: print(
+                f"\rffmpeg 다운로드 중... {ratio * 100:5.1f}%", end="", flush=True
+            )
         )
         print()
     ffmpeg, ffprobe = ffmpeg_paths

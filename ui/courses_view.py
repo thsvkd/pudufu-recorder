@@ -43,7 +43,7 @@ def build_error_view(message: str, on_retry) -> ft.Control:
     )
 
 
-def build_course_list_view(app: "App", courses: list[Course]) -> ft.Control:
+def build_course_list_view(app: App, courses: list[Course]) -> ft.Control:
     list_view = ft.ListView(expand=True, spacing=8)
 
     def render(items: list[Course]) -> None:
@@ -75,7 +75,11 @@ def build_course_list_view(app: "App", courses: list[Course]) -> ft.Control:
             ft.Row(
                 [
                     ft.Text("내 강의", size=20, weight=ft.FontWeight.BOLD),
-                    ft.TextButton("로그아웃", icon=ft.Icons.LOGOUT, on_click=lambda e: app.page.run_task(app.show_login)),
+                    ft.TextButton(
+                        "로그아웃",
+                        icon=ft.Icons.LOGOUT,
+                        on_click=lambda e: app.page.run_task(app.show_login),
+                    ),
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             ),
@@ -88,7 +92,7 @@ def build_course_list_view(app: "App", courses: list[Course]) -> ft.Control:
     )
 
 
-def _build_course_card(app: "App", course: Course) -> ft.Control:
+def _build_course_card(app: App, course: Course) -> ft.Control:
     return ft.Container(
         content=ft.Row(
             [

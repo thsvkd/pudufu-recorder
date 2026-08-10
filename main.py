@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 
 import flet as ft
@@ -15,10 +16,9 @@ from ui.app import App
 
 # 패키징된 앱에는 .env가 없다. 인자 없는 load_dotenv()는 호출 스택을 거슬러
 # 파일을 찾는데, .pyc로 묶인 환경에서는 그 과정이 실패할 수 있어 경로를 명시한다.
-try:
+# .env가 없거나 읽을 수 없어도 앱은 떠야 한다.
+with contextlib.suppress(Exception):
     load_dotenv(".env")
-except Exception:  # .env가 없거나 읽을 수 없어도 앱은 떠야 한다
-    pass
 
 
 def main(page: ft.Page) -> None:

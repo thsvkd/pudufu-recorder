@@ -61,7 +61,9 @@ def _open_folder(path: Path) -> None:
 class ProgressScreen:
     """다운로드 진행 상황을 보여주고, 행 단위로만 갱신하는 화면."""
 
-    def __init__(self, app: "App", course: Course, lessons: list[Lesson], recorder, output_dir: Path) -> None:
+    def __init__(
+        self, app: App, course: Course, lessons: list[Lesson], recorder, output_dir: Path
+    ) -> None:
         self.app = app
         self.page = app.page
         self.course = course
@@ -85,7 +87,9 @@ class ProgressScreen:
         self.overall_bar = ft.ProgressBar(value=0, expand=True)
         self.overall_text = ft.Text(f"0/{self.total} 완료")
         self.eta_text = ft.Text("", size=12, color=ft.Colors.ON_SURFACE_VARIANT)
-        self.cancel_button = ft.ElevatedButton("중단", icon=ft.Icons.CANCEL, on_click=self._on_cancel_click)
+        self.cancel_button = ft.ElevatedButton(
+            "중단", icon=ft.Icons.CANCEL, on_click=self._on_cancel_click
+        )
 
         rows: list[ft.Control] = []
         for lesson in self.lessons:
@@ -99,13 +103,19 @@ class ProgressScreen:
             bar = ft.ProgressBar(value=0, width=140)
             row = ft.Row(
                 [
-                    ft.Text(lesson.title, expand=True, overflow=ft.TextOverflow.ELLIPSIS, max_lines=1),
+                    ft.Text(
+                        lesson.title, expand=True, overflow=ft.TextOverflow.ELLIPSIS, max_lines=1
+                    ),
                     badge,
                     bar,
                 ],
                 spacing=12,
             )
-            self.row_controls[lesson.lesson_id] = {"badge": badge, "badge_text": badge_text, "bar": bar}
+            self.row_controls[lesson.lesson_id] = {
+                "badge": badge,
+                "badge_text": badge_text,
+                "bar": bar,
+            }
             rows.append(row)
 
         self.list_view = ft.ListView(controls=rows, expand=True, spacing=6)
@@ -115,7 +125,9 @@ class ProgressScreen:
             [
                 header,
                 ft.Row([self.overall_bar]),
-                ft.Row([self.overall_text, self.eta_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.Row(
+                    [self.overall_text, self.eta_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN
+                ),
                 ft.Row([self.cancel_button]),
                 ft.Divider(),
                 self.list_view,
@@ -145,7 +157,9 @@ class ProgressScreen:
         label = _STAGE_LABELS.get(progress.stage, progress.stage)
         row["badge_text"].value = label
         row["badge_text"].color = _STAGE_TEXT_COLORS.get(progress.stage)
-        row["badge"].bgcolor = _STAGE_COLORS.get(progress.stage, ft.Colors.SURFACE_CONTAINER_HIGHEST)
+        row["badge"].bgcolor = _STAGE_COLORS.get(
+            progress.stage, ft.Colors.SURFACE_CONTAINER_HIGHEST
+        )
         row["bar"].value = max(0.0, min(1.0, progress.percent / 100))
 
         changed: list[ft.Control] = [row["badge"], row["badge_text"], row["bar"]]
@@ -176,12 +190,17 @@ class ProgressScreen:
         self.last_summary = summary
         self.cancel_button.visible = False
 
-        was_cancelled = self.cancel_event.is_set() and (summary.done + summary.skipped + summary.failed) < self.total
+        was_cancelled = (
+            self.cancel_event.is_set()
+            and (summary.done + summary.skipped + summary.failed) < self.total
+        )
         title = "중단됨" if was_cancelled else "다운로드 완료"
 
         content: list[ft.Control] = [
             ft.Text(title, size=16, weight=ft.FontWeight.BOLD),
-            ft.Text(f"완료 {summary.done}개 · 건너뜀 {summary.skipped}개 · 실패 {summary.failed}개"),
+            ft.Text(
+                f"완료 {summary.done}개 · 건너뜀 {summary.skipped}개 · 실패 {summary.failed}개"
+            ),
             ft.Row(
                 [
                     ft.ElevatedButton(
@@ -195,7 +214,10 @@ class ProgressScreen:
 
         if summary.errors:
             error_list = ft.Column(
-                [ft.Text(f"· {title_}: {message}", size=12, color=ft.Colors.ERROR) for title_, message in summary.errors],
+                [
+                    ft.Text(f"· {title_}: {message}", size=12, color=ft.Colors.ERROR)
+                    for title_, message in summary.errors
+                ],
                 spacing=4,
             )
             content.append(ft.Text("실패한 항목", size=14, weight=ft.FontWeight.BOLD))
@@ -216,7 +238,7 @@ class ProgressScreen:
         if not self.last_summary or not self.last_summary.errors:
             return
         failed_titles = {title for title, _ in self.last_summary.errors}
-        retry_lessons = [l for l in self.lessons if l.title in failed_titles]
+        retry_lessons = [item for item in self.lessons if item.title in failed_titles]
         if not retry_lessons:
             return
         self.app.begin_download(self.course, retry_lessons)

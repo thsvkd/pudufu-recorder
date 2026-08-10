@@ -19,17 +19,19 @@ WORKER_OPTIONS = ["1", "2", "3", "4"]
 class LessonSelectScreen:
     """섹션별로 묶인 강의 목차 선택 화면과 다운로드 설정 패널."""
 
-    def __init__(self, app: "App", course: Course, lessons: list[Lesson]) -> None:
+    def __init__(self, app: App, course: Course, lessons: list[Lesson]) -> None:
         self.app = app
         self.course = course
         self.lessons = lessons
         # duration_sec 은 표시/예상시간 계산용 부가 정보일 뿐, 영상 유무와 무관하다.
         # 재생시간 정보가 없는 항목도 다운로드 대상이 될 수 있으므로 기본적으로 전부 선택한다.
-        self.selected: set[str] = {l.lesson_id for l in lessons}
+        self.selected: set[str] = {item.lesson_id for item in lessons}
         self.lesson_checkboxes: dict[str, ft.Checkbox] = {}
         self.section_checkboxes: dict[int, ft.Checkbox] = {}
         self.summary_text = ft.Text(size=13, color=ft.Colors.ON_SURFACE_VARIANT)
-        self.select_all_checkbox = ft.Checkbox(label="전체 선택", value=True, on_change=self._on_select_all)
+        self.select_all_checkbox = ft.Checkbox(
+            label="전체 선택", value=True, on_change=self._on_select_all
+        )
 
         self.speed_dropdown = ft.Dropdown(
             label="배속",
@@ -68,7 +70,10 @@ class LessonSelectScreen:
     def _build_root(self) -> ft.Control:
         header = ft.Row(
             [
-                ft.IconButton(icon=ft.Icons.ARROW_BACK, on_click=lambda e: self.app.page.run_task(self.app.show_course_list)),
+                ft.IconButton(
+                    icon=ft.Icons.ARROW_BACK,
+                    on_click=lambda e: self.app.page.run_task(self.app.show_course_list),
+                ),
                 ft.Text(self.course.title, size=18, weight=ft.FontWeight.BOLD, expand=True),
             ]
         )
@@ -93,7 +98,9 @@ class LessonSelectScreen:
                         [
                             ft.Text("저장 폴더:", size=13),
                             self.output_dir_text,
-                            ft.TextButton("변경", icon=ft.Icons.FOLDER_OPEN, on_click=self._on_change_folder),
+                            ft.TextButton(
+                                "변경", icon=ft.Icons.FOLDER_OPEN, on_click=self._on_change_folder
+                            ),
                         ],
                         spacing=8,
                     ),
@@ -133,7 +140,7 @@ class LessonSelectScreen:
     def _build_section(self, section_index: int, lessons: list[Lesson]) -> ft.Control:
         section_checkbox = ft.Checkbox(
             label=lessons[0].section_title,
-            value=all(l.lesson_id in self.selected for l in lessons),
+            value=all(item.lesson_id in self.selected for item in lessons),
             on_change=lambda e, si=section_index: self._on_section_toggle(si, e.control.value),
         )
         self.section_checkboxes[section_index] = section_checkbox
@@ -148,7 +155,7 @@ class LessonSelectScreen:
     def _build_lesson_row(self, lesson: Lesson) -> ft.Control:
         checkbox = ft.Checkbox(
             value=lesson.lesson_id in self.selected,
-            on_change=lambda e, l=lesson: self._on_lesson_toggle(l, e.control.value),
+            on_change=lambda e, item=lesson: self._on_lesson_toggle(item, e.control.value),
         )
         self.lesson_checkboxes[lesson.lesson_id] = checkbox
 
@@ -157,7 +164,11 @@ class LessonSelectScreen:
                 [
                     checkbox,
                     ft.Text(lesson.title, expand=True),
-                    ft.Text(format_duration(lesson.duration_sec), size=12, color=ft.Colors.ON_SURFACE_VARIANT),
+                    ft.Text(
+                        format_duration(lesson.duration_sec),
+                        size=12,
+                        color=ft.Colors.ON_SURFACE_VARIANT,
+                    ),
                 ],
             ),
             padding=ft.Padding(left=24, top=0, right=8, bottom=0),
@@ -172,10 +183,14 @@ class LessonSelectScreen:
         else:
             self.selected.discard(lesson.lesson_id)
 
-        section_lessons = [l for l in self.lessons if l.section_index == lesson.section_index]
+        section_lessons = [
+            item for item in self.lessons if item.section_index == lesson.section_index
+        ]
         section_checkbox = self.section_checkboxes.get(lesson.section_index)
         if section_checkbox is not None:
-            section_checkbox.value = all(l.lesson_id in self.selected for l in section_lessons)
+            section_checkbox.value = all(
+                item.lesson_id in self.selected for item in section_lessons
+            )
         self.select_all_checkbox.value = len(self.selected) == len(self.lessons)
 
         self._refresh_summary()
@@ -226,7 +241,7 @@ class LessonSelectScreen:
             self.output_dir_text.update()
 
     def _on_start_click(self, e: ft.ControlEvent) -> None:
-        chosen = [l for l in self.lessons if l.lesson_id in self.selected]
+        chosen = [item for item in self.lessons if item.lesson_id in self.selected]
         if not chosen:
             self.app.show_snack_bar("다운로드할 강의를 하나 이상 선택해주세요.")
             return
@@ -234,9 +249,9 @@ class LessonSelectScreen:
 
     # ------------------------------------------------------------------
     def _refresh_summary(self) -> None:
-        selected_lessons = [l for l in self.lessons if l.lesson_id in self.selected]
+        selected_lessons = [item for item in self.lessons if item.lesson_id in self.selected]
         count = len(selected_lessons)
-        known = [l for l in selected_lessons if l.duration_sec is not None]
+        known = [item for item in selected_lessons if item.duration_sec is not None]
         unknown_count = count - len(known)
 
         if count == 0:
@@ -248,13 +263,14 @@ class LessonSelectScreen:
             self.summary_text.value = f"선택 {count}개 · 재생시간 정보 없음"
             return
 
-        total_sec = sum(l.duration_sec for l in known)
+        total_sec = sum(item.duration_sec for item in known)
         sped_sec = total_sec / self.app.speed if self.app.speed else total_sec
         if unknown_count:
             # 일부만 알 수 있으면 합산값이 실제보다 적을 수 있다는 것을 알려준다.
             self.summary_text.value = (
-                f"선택 {count}개 · 총 재생시간 {format_hours_minutes(total_sec)} 이상(일부 미표시) · "
-                f"{self.app.speed}배속 예상 {format_hours_minutes(sped_sec)} 이상"
+                f"선택 {count}개 · 총 재생시간 {format_hours_minutes(total_sec)} 이상"
+                f"(일부 미표시) · {self.app.speed}배속 예상 "
+                f"{format_hours_minutes(sped_sec)} 이상"
             )
         else:
             self.summary_text.value = (

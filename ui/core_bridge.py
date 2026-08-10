@@ -43,14 +43,16 @@ except ImportError:
     Recorder = None  # type: ignore[assignment,misc]
 
 try:
-    from pudufu.velopack_update import REPO_URL
-    from pudufu.velopack_update import apply_and_restart
+    from pudufu.velopack_update import (
+        REPO_URL,
+        apply_and_restart,
+        current_version,
+        is_installed,
+        run_startup_maintenance,
+        target_version,
+    )
     from pudufu.velopack_update import check as check_update
-    from pudufu.velopack_update import current_version
     from pudufu.velopack_update import download as download_update
-    from pudufu.velopack_update import is_installed
-    from pudufu.velopack_update import run_startup_maintenance
-    from pudufu.velopack_update import target_version
 
     HAS_VELOPACK = True
 except ImportError:

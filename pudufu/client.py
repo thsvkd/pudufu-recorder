@@ -59,9 +59,7 @@ class PuduFuClient:
             if course_id in courses:
                 continue
             title = self._find_course_title(a) or f"course_{course_id}"
-            courses[course_id] = Course(
-                course_id=course_id, title=title, entry_lesson_id=lesson_id
-            )
+            courses[course_id] = Course(course_id=course_id, title=title, entry_lesson_id=lesson_id)
         return list(courses.values())
 
     @staticmethod
@@ -95,14 +93,10 @@ class PuduFuClient:
             ):
                 lesson_id = lesson_el["data-lesson-id"]
                 lesson_title_el = lesson_el.select_one(".vod-lesson__title")
-                lesson_title = (
-                    lesson_title_el.get_text(strip=True) if lesson_title_el else ""
-                )
+                lesson_title = lesson_title_el.get_text(strip=True) if lesson_title_el else ""
                 duration_el = lesson_el.select_one(".vod-lesson__duration")
                 duration_sec = (
-                    self._parse_duration(duration_el.get_text(strip=True))
-                    if duration_el
-                    else None
+                    self._parse_duration(duration_el.get_text(strip=True)) if duration_el else None
                 )
                 lessons.append(
                     Lesson(

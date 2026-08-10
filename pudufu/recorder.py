@@ -6,9 +6,9 @@ import platform
 import re
 import subprocess
 import threading
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Callable
 
 from pudufu.client import PuduFuClient
 from pudufu.models import Course, Lesson, Progress, Summary
@@ -57,9 +57,7 @@ class Recorder:
 
         with ThreadPoolExecutor(max_workers=self.workers) as executor:
             futures = {
-                executor.submit(
-                    self._process_lesson, course, lesson, on_progress, cancel
-                ): lesson
+                executor.submit(self._process_lesson, course, lesson, on_progress, cancel): lesson
                 for lesson in lessons
             }
             for future in as_completed(futures):
@@ -107,9 +105,7 @@ class Recorder:
                 return ("cancelled", "취소됨")
             try:
                 self._process_lesson_once(course, lesson, final_path, on_progress, cancel)
-                on_progress(
-                    Progress(lesson=lesson, stage="done", percent=100.0, message="완료")
-                )
+                on_progress(Progress(lesson=lesson, stage="done", percent=100.0, message="완료"))
                 return ("done", "")
             except _Cancelled:
                 self._cleanup_partials(course, lesson, final_path)
@@ -122,9 +118,7 @@ class Recorder:
                 self._cleanup_partials(course, lesson, final_path)
                 continue
 
-        on_progress(
-            Progress(lesson=lesson, stage="error", percent=0.0, message=last_error)
-        )
+        on_progress(Progress(lesson=lesson, stage="error", percent=0.0, message=last_error))
         return ("error", last_error)
 
     def _process_lesson_once(
@@ -140,9 +134,7 @@ class Recorder:
         )
         uid = self.client.get_video_uid(course.course_id, lesson.lesson_id)
         if uid is None:
-            on_progress(
-                Progress(lesson=lesson, stage="skipped", percent=0.0, message="영상 없음")
-            )
+            on_progress(Progress(lesson=lesson, stage="skipped", percent=0.0, message="영상 없음"))
             raise _SkippedNoVideo()
         if cancel.is_set():
             raise _Cancelled()
@@ -162,9 +154,17 @@ class Recorder:
             Progress(lesson=lesson, stage="downloading", percent=0.0, message="다운로드 중")
         )
         download_cmd = [
-            str(self.ffmpeg), "-y", "-v", "error", "-stats",
-            "-i", m3u8_url,
-            "-c", "copy", "-bsf:a", "aac_adtstoasc",
+            str(self.ffmpeg),
+            "-y",
+            "-v",
+            "error",
+            "-stats",
+            "-i",
+            m3u8_url,
+            "-c",
+            "copy",
+            "-bsf:a",
+            "aac_adtstoasc",
             str(raw_part),
         ]
         self._run_ffmpeg(download_cmd, total_sec, "downloading", lesson, on_progress, cancel)
@@ -180,12 +180,24 @@ class Recorder:
             video_codec_args = ["-c:v", "libx264", "-crf", "20", "-preset", "veryfast"]
 
         convert_cmd = [
-            str(self.ffmpeg), "-y", "-v", "error", "-stats",
-            "-i", str(raw_path),
-            "-filter_complex", filter_complex,
-            "-map", "[v]", "-map", "[a]",
+            str(self.ffmpeg),
+            "-y",
+            "-v",
+            "error",
+            "-stats",
+            "-i",
+            str(raw_path),
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[v]",
+            "-map",
+            "[a]",
             *video_codec_args,
-            "-c:a", "aac", "-b:a", "128k",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
             str(final_part),
         ]
         on_progress(
@@ -202,14 +214,10 @@ class Recorder:
 
     def _final_path(self, course: Course, lesson: Lesson) -> Path:
         safe_course = sanitize_filename(course.title, f"course_{course.course_id}")
-        safe_section = sanitize_filename(
-            lesson.section_title, f"section_{lesson.section_index}"
-        )
+        safe_section = sanitize_filename(lesson.section_title, f"section_{lesson.section_index}")
         safe_title = sanitize_filename(lesson.title, f"lesson_{lesson.lesson_id}")
         section_dir = (
-            self.output_dir
-            / safe_course
-            / f"{lesson.section_index + 1:02d}_{safe_section}"
+            self.output_dir / safe_course / f"{lesson.section_index + 1:02d}_{safe_section}"
         )
         return section_dir / f"{lesson.index_in_section + 1:02d}_{safe_title}.mp4"
 
@@ -296,9 +304,19 @@ class Recorder:
     def _probe_stream_duration(self, m3u8_url: str) -> float | None:
         try:
             result = subprocess.run(
-                [str(self.ffprobe), "-v", "error", "-show_entries", "format=duration",
-                 "-of", "default=nw=1:nk=1", m3u8_url],
-                capture_output=True, text=True, timeout=30,
+                [
+                    str(self.ffprobe),
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=nw=1:nk=1",
+                    m3u8_url,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             value = result.stdout.strip()
             return float(value) if value else None
@@ -312,8 +330,18 @@ class Recorder:
         ):
             try:
                 result = subprocess.run(
-                    [str(self.ffprobe), "-v", "error", *args, "-of", "default=nw=1:nk=1", str(path)],
-                    capture_output=True, text=True, timeout=30,
+                    [
+                        str(self.ffprobe),
+                        "-v",
+                        "error",
+                        *args,
+                        "-of",
+                        "default=nw=1:nk=1",
+                        str(path),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
                 )
                 value = result.stdout.strip()
                 if value.isdigit():
@@ -328,7 +356,9 @@ class Recorder:
         try:
             result = subprocess.run(
                 [str(self.ffmpeg), "-hide_banner", "-encoders"],
-                capture_output=True, text=True, timeout=15,
+                capture_output=True,
+                text=True,
+                timeout=15,
             )
             return "h264_videotoolbox" in result.stdout
         except Exception:
