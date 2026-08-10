@@ -622,6 +622,36 @@ def verify_artifact(dst: Path, target: str) -> None:
     info(f"완료(앱 번들): {apps[0]}")
 
 
+# 배포 번들에 절대 들어가면 안 되는 항목. flet build가 프로젝트 폴더를 통째로 복사하므로,
+# pyproject.toml의 [tool.flet.app] exclude가 비거나 매칭이 어긋나면 그대로 딸려 들어간다.
+# v0.1.0에서 실제로 .env(프드프 계정 정보)가 공개 릴리스 산출물에 실려 나갔다. 그때 막지
+# 못한 이유는 "실수했다"가 아니라 **검사하는 곳이 없었다**는 것이므로, exclude와 별개로
+# 여기서 산출물을 직접 뒤진다.
+_FORBIDDEN_IN_BUNDLE = (".env", ".git", ".venv")
+
+
+def verify_no_secrets(dst: Path) -> None:
+    """배포 번들에 비밀·개발 전용 항목이 섞였는지 확인한다(있으면 중단).
+
+    서명·패키징 **전에** 부른다. 패키징을 마친 뒤에 잡으면 이미 업로드 가능한 산출물이
+    디스크에 남아, 실수로 그걸 올릴 여지가 생긴다.
+    """
+    found: list[Path] = []
+    for root, dirs, files in os.walk(dst):
+        found += [Path(root) / name for name in (*dirs, *files) if name in _FORBIDDEN_IN_BUNDLE]
+        # 걸린 디렉터리 내부까지 훑을 이유는 없다(.git/.venv는 항목이 수만 개다).
+        dirs[:] = [d for d in dirs if d not in _FORBIDDEN_IN_BUNDLE]
+    if not found:
+        return
+    shown = "\n".join(f"    {path.relative_to(dst)}" for path in found[:10])
+    more = f"\n    … 외 {len(found) - 10}개" if len(found) > 10 else ""
+    fail(
+        "배포 번들에 들어가면 안 되는 항목이 있습니다 — 패키징을 중단합니다.\n"
+        f"{shown}{more}\n"
+        "  pyproject.toml의 [tool.flet.app] exclude 를 확인하세요."
+    )
+
+
 def app_bundle(dst: Path) -> Path:
     """macOS 배포 폴더 안의 ``.app`` 번들 경로(vpk pack의 packDir)."""
     apps = sorted(dst.glob("*.app"))
@@ -726,6 +756,7 @@ def main() -> int:
 
     dst = stash_output(target)
     verify_artifact(dst, target)
+    verify_no_secrets(dst)
     if target == "windows":
         verify_vc_runtime_arch(dst)  # 서명·패키징 전에 잡아야 한다.
         # 앱 exe 서명(PDF_SIGN_* 설정 시). 미지정이면 미서명으로 계속한다.

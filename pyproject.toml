@@ -42,3 +42,19 @@ copyright = "Copyright (c) 2026 thsvkd"
 
 [tool.flet.app]
 module = "main"
+# flet build는 프로젝트 폴더를 **통째로** 앱 안에 복사한다. 빼지 않으면 개발 환경이 그대로
+# 사용자에게 배포된다 — v0.1.0에서 실제로 .env(프드프 계정 정보)가 공개 릴리스에 실려 나갔다.
+# 이 목록만 믿지 않는다. scripts/build.py의 verify_no_secrets가 패키징 전에 산출물을 직접
+# 뒤져 다시 막는다(이 설정이 비거나 매칭이 어긋나도 배포되지 않게).
+exclude = [
+    ".env",
+    ".git",
+    ".venv",
+    ".omc",
+    ".claude",
+    ".ruff_cache",
+    "__pycache__",
+    "dist",
+    "build",
+    "recordings",
+]
