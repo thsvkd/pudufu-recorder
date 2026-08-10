@@ -20,12 +20,12 @@
 
 [최신 릴리스](https://github.com/thsvkd/pudufu-recorder/releases/latest)에서 사용 중인 운영체제에 맞는 파일을 받으세요.
 
-- **macOS**: `PudufuRecorder-macos.zip`
-- **Windows**: `PudufuRecorder-windows.zip`
+- **macOS**: `PudufuRecorder-osx-Setup.pkg`
+- **Windows**: `PudufuRecorder-win-Setup.exe`
 
-압축을 풀고 앱을 실행합니다.
+받은 설치 파일을 실행하면 설치가 진행되고, 끝나면 앱이 바로 열립니다. 이후 새 버전이 나오면 앱이 알려주고 스스로 업데이트합니다.
 
-> macOS에서 "확인되지 않은 개발자" 경고가 뜨면, 앱을 우클릭 후 **열기**를 선택하세요.
+> macOS에서 "확인되지 않은 개발자" 경고가 뜨면, 설치 파일을 우클릭 후 **열기**를 선택하세요.
 
 ### 2. 로그인
 
