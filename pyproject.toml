@@ -1,6 +1,6 @@
 [project]
 name = "pudufu-recorder"
-version = "0.1.1"
+version = "0.1.2"
 description = "프드프(pudufu.co.kr) 내 강의를 1.5배속 영상으로 저장하는 데스크톱 앱"
 readme = "README.md"
 requires-python = ">=3.12"
