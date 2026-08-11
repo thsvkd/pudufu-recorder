@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from pudufu.client import PuduFuClient
+from pudufu.ffmpeg_tool import NO_WINDOW
 from pudufu.models import Course, Lesson, Progress, Summary
 from pudufu.util import sanitize_filename
 
@@ -244,7 +245,13 @@ class Recorder:
         on_progress: Callable[[Progress], None],
         cancel: threading.Event,
     ) -> None:
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=NO_WINDOW,
+        )
         try:
             buf = ""
             while True:
@@ -317,6 +324,7 @@ class Recorder:
                 capture_output=True,
                 text=True,
                 timeout=30,
+                creationflags=NO_WINDOW,
             )
             value = result.stdout.strip()
             return float(value) if value else None
@@ -342,6 +350,7 @@ class Recorder:
                     capture_output=True,
                     text=True,
                     timeout=30,
+                    creationflags=NO_WINDOW,
                 )
                 value = result.stdout.strip()
                 if value.isdigit():

@@ -10,16 +10,23 @@ URL 규약과 압축 해제 로직만 잠근다.
 from __future__ import annotations
 
 import io
+import shutil
+import sys
 import zipfile
 from pathlib import Path
 
 import pytest
 
+from pudufu import ffmpeg_tool
 from pudufu.ffmpeg_tool import (
     FFMPEG_ZIP_URL,
     FFPROBE_ZIP_URL,
+    WINDOWS_ZIP_URL,
     FFmpegNotFound,
     _extract_binary,
+    binary_name,
+    find_ffmpeg,
+    install_ffmpeg,
 )
 
 
@@ -107,3 +114,98 @@ def test_extract_ignores_directory_entries(tmp_path: Path) -> None:
     path = _extract_binary(buf, tmp_path, "ffprobe")
 
     assert path.read_bytes() == b"BINARY"
+
+
+# -- Windows 지원 -------------------------------------------------------------
+#
+# v0.1.x는 darwin이 아니면 곧장 "macOS에서만 지원됩니다"로 끝나서, Windows 사용자는 설치
+# 안내를 눌러도 실패 문구만 봤다. 아래는 그 회귀를 막는다.
+
+
+@pytest.fixture
+def as_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+
+
+def test_binary_name_adds_exe_on_windows(as_windows: None) -> None:
+    assert binary_name("ffmpeg") == "ffmpeg.exe"
+
+
+def test_binary_name_stays_bare_on_macos(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    assert binary_name("ffprobe") == "ffprobe"
+
+
+def test_find_ffmpeg_picks_up_exe_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, as_windows: None
+) -> None:
+    """설치는 ffmpeg.exe로 해 놓고 확장자 없는 이름만 찾으면 매번 다시 받게 된다."""
+    (tmp_path / "ffmpeg.exe").write_bytes(b"BINARY")
+    (tmp_path / "ffprobe.exe").write_bytes(b"BINARY")
+    monkeypatch.setattr(ffmpeg_tool, "_app_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+
+    assert find_ffmpeg() == (tmp_path / "ffmpeg.exe", tmp_path / "ffprobe.exe")
+
+
+def test_windows_install_downloads_one_archive_for_both_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, as_windows: None
+) -> None:
+    """gyan.dev 빌드는 zip 하나에 둘 다 들어 있다 — 도구마다 받으면 80MB를 두 번 받는다."""
+    archive = _zip_with(
+        {
+            "ffmpeg-7.1-essentials_build/bin/ffmpeg.exe": b"FFMPEG",
+            "ffmpeg-7.1-essentials_build/bin/ffprobe.exe": b"FFPROBE",
+        }
+    )
+    requested: list[str] = []
+    monkeypatch.setattr(ffmpeg_tool, "_app_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(ffmpeg_tool, "_verify_runnable", lambda _path: None)
+    monkeypatch.setattr(
+        ffmpeg_tool.requests,
+        "get",
+        lambda url, **_kwargs: _FakeResponse(url, archive.getvalue(), requested),
+    )
+
+    ffmpeg_path, ffprobe_path = install_ffmpeg()
+
+    assert requested == [WINDOWS_ZIP_URL]
+    assert ffmpeg_path.read_bytes() == b"FFMPEG"
+    assert ffprobe_path.read_bytes() == b"FFPROBE"
+
+
+def test_install_on_unsupported_platform_says_which_are_supported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    with pytest.raises(FFmpegNotFound) as excinfo:
+        install_ffmpeg()
+
+    message = str(excinfo.value)
+    assert "macOS" in message
+    assert "Windows" in message
+
+
+class _FakeResponse:
+    """requests.get 대체용. 네트워크를 타지 않고 준비된 zip 바이트를 흘려보낸다."""
+
+    def __init__(self, url: str, payload: bytes, requested: list[str]) -> None:
+        requested.append(url)
+        self._payload = payload
+        self.headers = {"Content-Length": str(len(payload))}
+
+    def __enter__(self) -> _FakeResponse:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def iter_content(self, chunk_size: int) -> object:
+        return iter(
+            [self._payload[i : i + chunk_size] for i in range(0, len(self._payload), chunk_size)]
+        )

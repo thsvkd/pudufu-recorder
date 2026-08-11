@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from pathlib import Path
 
 import flet as ft
@@ -188,7 +189,9 @@ class App:
             modal=True,
             title=ft.Text("ffmpeg 설치 필요"),
             content=ft.Text(
-                "영상 처리에 필요한 ffmpeg가 없습니다. 지금 자동으로 설치할까요? (약 80MB)"
+                "영상 처리에 필요한 ffmpeg가 없습니다. 지금 자동으로 설치할까요? "
+                # Windows(gyan.dev)와 macOS(evermeet.cx)는 받는 파일 크기가 꽤 다르다.
+                f"({'약 110MB' if sys.platform.startswith('win') else '약 80MB'})"
             ),
             actions=[
                 ft.TextButton("아니요", on_click=on_no),
