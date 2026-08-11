@@ -63,6 +63,15 @@ def _source() -> VideoSource:
     )
 
 
+def _youtube_source() -> VideoSource:
+    return VideoSource(
+        uid="auFRYPDpiMQ",
+        mp4_url=None,
+        hls_url=None,
+        youtube_url="https://www.youtube.com/watch?v=auFRYPDpiMQ",
+    )
+
+
 def _course() -> Course:
     return Course(course_id="course", title="강의", entry_lesson_id="lesson")
 
@@ -155,6 +164,196 @@ def test_download_mp4_turns_read_timeout_into_cancellation(monkeypatch, tmp_path
         recorder._download_mp4(
             _source().mp4_url,
             tmp_path / "original.part.mp4",
+            _lesson(),
+            lambda progress: None,
+            cancel,
+        )
+
+
+def test_missing_video_source_retries_then_reports_error(tmp_path: Path) -> None:
+    attempts = 0
+
+    def get_video_source(*args):  # type: ignore[no-untyped-def]
+        nonlocal attempts
+        attempts += 1
+        return None
+
+    recorder = Recorder.__new__(Recorder)
+    recorder.client = SimpleNamespace(get_video_source=get_video_source)
+    recorder.output_dir = tmp_path
+    recorder.keep_original = False
+    progress = []
+
+    status, message = recorder._process_lesson(
+        _course(), _lesson(), progress.append, threading.Event()
+    )
+
+    assert attempts == recorder_module._MAX_ATTEMPTS
+    assert status == "error"
+    assert "다운로드 가능한 영상을 찾지 못했습니다" in message
+    assert progress[-1].stage == "error"
+    assert progress[-1].message == message
+
+
+def test_youtube_source_downloads_then_converts_and_cleans_temporary_original(
+    tmp_path: Path,
+) -> None:
+    source = _youtube_source()
+    recorder = Recorder.__new__(Recorder)
+    recorder.client = SimpleNamespace(get_video_source=lambda *args: source)
+    recorder.keep_original = False
+    recorder.speed = 1.5
+    downloads = []
+    conversions = []
+
+    def download_youtube(url, destination, *args) -> None:  # type: ignore[no-untyped-def]
+        downloads.append((url, destination))
+        destination.write_bytes(b"youtube-original")
+
+    def convert(input_source, *args) -> None:  # type: ignore[no-untyped-def]
+        conversions.append(input_source)
+        assert input_source.read_bytes() == b"youtube-original"
+
+    recorder._download_youtube = download_youtube
+    recorder._convert = convert
+    final_path = tmp_path / "final.mp4"
+
+    recorder._process_lesson_once(
+        _course(), _lesson(), final_path, lambda progress: None, threading.Event()
+    )
+
+    temporary_original = tmp_path / ".raw_lesson_final.mp4"
+    assert downloads == [
+        (
+            source.youtube_url,
+            tmp_path / ".raw_lesson_final.part.mp4",
+        )
+    ]
+    assert conversions == [temporary_original]
+    assert not temporary_original.exists()
+
+
+def test_download_youtube_uses_bundled_ffmpeg_and_reports_progress(
+    monkeypatch, tmp_path: Path
+) -> None:  # type: ignore[no-untyped-def]
+    captured_options = {}
+
+    class _YoutubeDL:
+        def __init__(self, options) -> None:  # type: ignore[no-untyped-def]
+            captured_options.update(options)
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *args) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        def extract_info(self, url: str, download: bool):  # type: ignore[no-untyped-def]
+            hook = captured_options["progress_hooks"][0]
+            hook(
+                {
+                    "status": "downloading",
+                    "downloaded_bytes": 25,
+                    "total_bytes": 100,
+                }
+            )
+            downloaded_path = Path(captured_options["outtmpl"].replace("%(ext)s", "mp4"))
+            downloaded_path.write_bytes(b"youtube")
+            hook({"status": "finished"})
+            return {"filepath": str(downloaded_path)}
+
+    monkeypatch.setattr(recorder_module, "YoutubeDL", _YoutubeDL)
+    monkeypatch.setattr(recorder_module, "find_deno_bin", lambda: "/bundled/deno")
+    recorder = Recorder.__new__(Recorder)
+    recorder.ffmpeg = tmp_path / "tools" / "ffmpeg"
+    destination = tmp_path / "video.part.mp4"
+    progress = []
+
+    recorder._download_youtube(
+        _youtube_source().youtube_url,
+        destination,
+        _lesson(),
+        progress.append,
+        threading.Event(),
+    )
+
+    assert destination.read_bytes() == b"youtube"
+    assert captured_options["ffmpeg_location"] == str(recorder.ffmpeg.parent)
+    assert captured_options["js_runtimes"] == {"deno": {"path": "/bundled/deno"}}
+    assert captured_options["merge_output_format"] == "mp4"
+    assert captured_options["noplaylist"] is True
+    assert len(captured_options["postprocessor_hooks"]) == 1
+    assert callable(captured_options["match_filter"])
+    assert [item.percent for item in progress] == [0.0, 25.0, 100.0]
+
+
+def test_download_youtube_cancels_from_progress_hook(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    cancel = threading.Event()
+
+    class _YoutubeDL:
+        def __init__(self, options) -> None:  # type: ignore[no-untyped-def]
+            self.hook = options["progress_hooks"][0]
+            self.output_dir = Path(options["outtmpl"]).parent
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *args) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        def extract_info(self, url: str, download: bool):  # type: ignore[no-untyped-def]
+            (self.output_dir / "video.f137.mp4.part").write_bytes(b"partial")
+            cancel.set()
+            self.hook({"status": "downloading"})
+
+    monkeypatch.setattr(recorder_module, "YoutubeDL", _YoutubeDL)
+    monkeypatch.setattr(recorder_module, "find_deno_bin", lambda: "/bundled/deno")
+    recorder = Recorder.__new__(Recorder)
+    recorder.ffmpeg = tmp_path / "ffmpeg"
+
+    with pytest.raises(recorder_module._Cancelled):
+        recorder._download_youtube(
+            _youtube_source().youtube_url,
+            tmp_path / "video.part.mp4",
+            _lesson(),
+            lambda progress: None,
+            cancel,
+        )
+
+    assert not list(tmp_path.glob(".ytdlp_*"))
+
+
+@pytest.mark.parametrize("boundary", ["metadata", "postprocessing"])
+def test_download_youtube_cancels_between_non_download_phases(
+    monkeypatch, tmp_path: Path, boundary: str
+) -> None:  # type: ignore[no-untyped-def]
+    cancel = threading.Event()
+
+    class _YoutubeDL:
+        def __init__(self, options) -> None:  # type: ignore[no-untyped-def]
+            self.options = options
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *args) -> None:  # type: ignore[no-untyped-def]
+            pass
+
+        def extract_info(self, url: str, download: bool):  # type: ignore[no-untyped-def]
+            cancel.set()
+            if boundary == "metadata":
+                self.options["match_filter"]({})
+            self.options["postprocessor_hooks"][0]({"status": "started"})
+
+    monkeypatch.setattr(recorder_module, "YoutubeDL", _YoutubeDL)
+    monkeypatch.setattr(recorder_module, "find_deno_bin", lambda: "/bundled/deno")
+    recorder = Recorder.__new__(Recorder)
+    recorder.ffmpeg = tmp_path / "ffmpeg"
+
+    with pytest.raises(recorder_module._Cancelled):
+        recorder._download_youtube(
+            _youtube_source().youtube_url,
+            tmp_path / "video.part.mp4",
             _lesson(),
             lambda progress: None,
             cancel,

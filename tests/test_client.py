@@ -78,3 +78,18 @@ def test_get_video_source_uses_delivery_host_when_customer_host_is_absent() -> N
 
     assert source is not None
     assert source.mp4_url.startswith("https://customer-player.cloudflarestream.com/")
+
+
+def test_get_video_source_recognizes_youtube_iframe() -> None:
+    client = PuduFuClient()
+    response = _Response()
+    response.text = '<iframe src="https://www.youtube.com/embed/auFRYPDpiMQ"></iframe>'
+    client.session = _Session(response)  # type: ignore[assignment]
+
+    source = client.get_video_source("course", "lesson")
+
+    assert source is not None
+    assert source.uid == "auFRYPDpiMQ"
+    assert source.mp4_url is None
+    assert source.hls_url is None
+    assert source.youtube_url == "https://www.youtube.com/watch?v=auFRYPDpiMQ"

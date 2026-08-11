@@ -30,8 +30,9 @@ class Lesson:
 @dataclass(frozen=True)
 class VideoSource:
     uid: str
-    mp4_url: str
-    hls_url: str
+    mp4_url: str | None
+    hls_url: str | None
+    youtube_url: str | None = None
 
 
 @dataclass

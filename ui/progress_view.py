@@ -111,6 +111,9 @@ class ProgressScreen:
                 bgcolor=_STAGE_COLORS["pending"],
             )
             bar = ft.ProgressBar(value=0, width=140)
+            message = ft.Text(
+                "", size=11, color=ft.Colors.ON_SURFACE_VARIANT, visible=False, max_lines=2
+            )
             row = ft.Row(
                 [
                     ft.Text(
@@ -125,8 +128,9 @@ class ProgressScreen:
                 "badge": badge,
                 "badge_text": badge_text,
                 "bar": bar,
+                "message": message,
             }
-            rows.append(row)
+            rows.append(ft.Column([row, message], spacing=2))
 
         self.list_view = ft.ListView(controls=rows, expand=True, spacing=6)
         self.summary_area = ft.Column([], visible=False)
@@ -173,6 +177,10 @@ class ProgressScreen:
         row["bar"].value = max(0.0, min(1.0, progress.percent / 100))
 
         changed: list[ft.Control] = [row["badge"], row["badge_text"], row["bar"]]
+        if progress.message:
+            row["message"].value = progress.message
+            row["message"].visible = True
+            changed.append(row["message"])
 
         if progress.stage in _TERMINAL_STAGES:
             self.finished_ids.add(progress.lesson.lesson_id)

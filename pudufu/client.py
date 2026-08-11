@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import parse_qs, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -23,6 +24,12 @@ VIDEO_URL_RE = re.compile(
     r"(?:https?:)?//(?P<host>[A-Za-z0-9.-]+cloudflarestream\.com)/(?P<uid>[a-f0-9]{32})"
 )
 CUSTOMER_HOST_RE = re.compile(r"customer-[A-Za-z0-9.-]+cloudflarestream\.com")
+YOUTUBE_HOSTS = {
+    "youtube.com",
+    "www.youtube.com",
+    "youtube-nocookie.com",
+    "www.youtube-nocookie.com",
+}
 
 
 class LoginError(Exception):
@@ -134,13 +141,32 @@ class PuduFuClient:
         url = f"{BASE_URL}/lecture/{course_id}/{lesson_id}"
         resp = self.session.get(url, timeout=self.timeout)
         resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        youtube_id = next(
+            (
+                video_id
+                for iframe in soup.find_all("iframe")
+                if (video_id := _youtube_video_id(iframe.get("src", ""))) is not None
+            ),
+            None,
+        )
+        youtube_url = (
+            f"https://www.youtube.com/watch?v={youtube_id}" if youtube_id is not None else None
+        )
         matches = list(VIDEO_URL_RE.finditer(resp.text))
         if not matches:
-            return None
+            if youtube_id is None:
+                return None
+            return VideoSource(
+                uid=youtube_id,
+                mp4_url=None,
+                hls_url=None,
+                youtube_url=youtube_url,
+            )
         iframe_match = next(
             (
                 match
-                for iframe in BeautifulSoup(resp.text, "html.parser").find_all("iframe")
+                for iframe in soup.find_all("iframe")
                 if (match := VIDEO_URL_RE.search(iframe.get("src", ""))) is not None
             ),
             None,
@@ -160,6 +186,7 @@ class PuduFuClient:
             uid=uid,
             mp4_url=f"{base_url}/downloads/default.mp4",
             hls_url=f"{base_url}/manifest/video.m3u8",
+            youtube_url=youtube_url,
         )
 
     def _find_delivery_host(self, uid: str) -> str:
@@ -179,3 +206,25 @@ class PuduFuClient:
         """이전 호출부와의 호환을 위해 영상 UID만 반환한다."""
         source = self.get_video_source(course_id, lesson_id)
         return source.uid if source else None
+
+
+def _youtube_video_id(url: str) -> str | None:
+    """YouTube iframe/watch URL에서 11자리 영상 ID를 추출한다."""
+    if not url:
+        return None
+    parsed = urlparse(url if "://" in url else f"https:{url}")
+    host = parsed.hostname or ""
+    path_parts = [part for part in parsed.path.split("/") if part]
+
+    candidate = None
+    if host in {"youtu.be", "www.youtu.be"} and path_parts:
+        candidate = path_parts[0]
+    elif host in YOUTUBE_HOSTS:
+        if path_parts and path_parts[0] in {"embed", "shorts", "live"} and len(path_parts) > 1:
+            candidate = path_parts[1]
+        elif parsed.path == "/watch":
+            candidate = parse_qs(parsed.query).get("v", [None])[0]
+
+    if candidate and re.fullmatch(r"[A-Za-z0-9_-]{11}", candidate):
+        return candidate
+    return None

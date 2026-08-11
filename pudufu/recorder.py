@@ -11,8 +11,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum, auto
 from pathlib import Path
 from queue import Empty, Queue
+from tempfile import TemporaryDirectory
 
 import requests
+from deno import find_deno_bin
+from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadCancelled, DownloadError
 
 from pudufu.client import PuduFuClient
 from pudufu.ffmpeg_tool import NO_WINDOW
@@ -123,9 +127,6 @@ class Recorder:
             except _Cancelled:
                 self._cleanup_partials(course, lesson, final_path)
                 return ("cancelled", "취소됨")
-            except _SkippedNoVideo:
-                self._cleanup_partials(course, lesson, final_path)
-                return ("skipped", "영상 없음")
             except Exception as exc:
                 last_error = str(exc)
                 self._cleanup_partials(course, lesson, final_path)
@@ -147,12 +148,28 @@ class Recorder:
         )
         source = self.client.get_video_source(course.course_id, lesson.lesson_id)
         if source is None:
-            on_progress(Progress(lesson=lesson, stage="skipped", percent=0.0, message="영상 없음"))
-            raise _SkippedNoVideo()
+            raise RuntimeError(
+                "다운로드 가능한 영상을 찾지 못했습니다. "
+                "영상이 없는 회차이거나 지원하지 않는 제공자일 수 있습니다."
+            )
         if cancel.is_set():
             raise _Cancelled()
 
         total_sec = lesson.duration_sec
+
+        if source.mp4_url is None or source.hls_url is None:
+            if source.youtube_url is None:
+                raise RuntimeError("인식된 영상 소스에 다운로드 주소가 없습니다.")
+            self._process_youtube(
+                source.youtube_url,
+                course,
+                lesson,
+                final_path,
+                total_sec,
+                on_progress,
+                cancel,
+            )
+            return
 
         if self.keep_original:
             raw_path = self._raw_path(course, lesson, final_path)
@@ -209,6 +226,38 @@ class Recorder:
             on_progress,
             cancel,
         )
+
+    def _process_youtube(
+        self,
+        url: str,
+        course: Course,
+        lesson: Lesson,
+        final_path: Path,
+        total_sec: float | None,
+        on_progress: Callable[[Progress], None],
+        cancel: threading.Event,
+    ) -> None:
+        raw_path = self._raw_path(course, lesson, final_path)
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_part = _part_path(raw_path)
+        self._download_youtube(url, raw_part, lesson, on_progress, cancel)
+        raw_part.replace(raw_path)
+        try:
+            if total_sec is None:
+                total_sec = self._probe_stream_duration(str(raw_path))
+            self._convert(
+                raw_path,
+                final_path,
+                total_sec,
+                "converting",
+                f"YouTube 영상 {self.speed}배속 변환 중",
+                lesson,
+                on_progress,
+                cancel,
+            )
+        finally:
+            if not self.keep_original:
+                raw_path.unlink(missing_ok=True)
 
     @staticmethod
     def _is_mp4_response(response: requests.Response) -> bool:
@@ -318,6 +367,92 @@ class Recorder:
             str(destination),
         ]
         self._run_ffmpeg(cmd, total_sec, "downloading", lesson, on_progress, cancel)
+
+    def _download_youtube(
+        self,
+        url: str,
+        destination: Path,
+        lesson: Lesson,
+        on_progress: Callable[[Progress], None],
+        cancel: threading.Event,
+    ) -> None:
+        if cancel.is_set():
+            raise _Cancelled()
+
+        def progress_hook(status: dict) -> None:
+            cancel_if_requested()
+            state = status.get("status")
+            if state == "downloading":
+                downloaded = status.get("downloaded_bytes") or 0
+                total = status.get("total_bytes") or status.get("total_bytes_estimate") or 0
+                percent = downloaded / total * 100 if total else 0.0
+                on_progress(
+                    Progress(
+                        lesson=lesson,
+                        stage="downloading",
+                        percent=min(100.0, percent),
+                        message="YouTube 다운로드 중",
+                    )
+                )
+            elif state == "finished":
+                on_progress(
+                    Progress(
+                        lesson=lesson,
+                        stage="downloading",
+                        percent=100.0,
+                        message="YouTube 다운로드 완료",
+                    )
+                )
+
+        def cancel_if_requested(*args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            if cancel.is_set():
+                raise DownloadCancelled("사용자가 다운로드를 취소했습니다.")
+
+        on_progress(
+            Progress(lesson=lesson, stage="downloading", percent=0.0, message="YouTube 다운로드 중")
+        )
+        with TemporaryDirectory(
+            prefix=f".ytdlp_{lesson.lesson_id}_", dir=destination.parent
+        ) as temp_dir:
+            options = {
+                "format": "bv*+ba/b",
+                "format_sort": ["vcodec:h264", "lang", "quality", "res", "fps", "acodec:aac"],
+                "outtmpl": str(Path(temp_dir) / "video.%(ext)s"),
+                "merge_output_format": "mp4",
+                "postprocessors": [
+                    {"key": "FFmpegVideoRemuxer", "preferedformat": "mp4"},
+                ],
+                "ffmpeg_location": str(self.ffmpeg.parent),
+                "js_runtimes": {"deno": {"path": find_deno_bin()}},
+                "progress_hooks": [progress_hook],
+                "postprocessor_hooks": [cancel_if_requested],
+                "match_filter": cancel_if_requested,
+                "noplaylist": True,
+                "socket_timeout": 30,
+                "retries": 3,
+                "fragment_retries": 3,
+                "extractor_retries": 3,
+                "quiet": True,
+                "noprogress": True,
+                "no_warnings": True,
+            }
+            try:
+                with YoutubeDL(options) as downloader:
+                    info = downloader.extract_info(url, download=True)
+                    downloaded_path = Path(
+                        info.get("filepath") or downloader.prepare_filename(info)
+                    )
+            except DownloadCancelled:
+                raise _Cancelled() from None
+            except DownloadError as exc:
+                raise RuntimeError(f"YouTube 다운로드 실패: {exc}") from exc
+
+            if cancel.is_set():
+                raise _Cancelled()
+            if not downloaded_path.exists():
+                raise RuntimeError("YouTube 다운로드가 완료됐지만 결과 파일을 찾지 못했습니다.")
+            destination.unlink(missing_ok=True)
+            downloaded_path.replace(destination)
 
     def _convert(
         self,
@@ -559,10 +694,6 @@ class Recorder:
     def _build_audio_filter(self) -> str:
         factors = _atempo_factors(self.speed)
         return ",".join(f"atempo={factor}" for factor in factors)
-
-
-class _SkippedNoVideo(Exception):
-    """get_video_uid가 None을 반환해 영상 없이 건너뛸 때 사용하는 내부 신호."""
 
 
 def _part_path(path: Path) -> Path:
