@@ -8,7 +8,11 @@ import subprocess
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from enum import Enum, auto
 from pathlib import Path
+from queue import Empty, Queue
+
+import requests
 
 from pudufu.client import PuduFuClient
 from pudufu.ffmpeg_tool import NO_WINDOW
@@ -18,11 +22,19 @@ from pudufu.util import sanitize_filename
 _TIME_RE = re.compile(r"time=(\d+):(\d\d):(\d\d(?:\.\d+)?)")
 _MIN_BITRATE = 1_000_000
 _MAX_BITRATE = 12_000_000
+_DEFAULT_BITRATE = 8_000_000
 _MAX_ATTEMPTS = 3  # 최초 시도 1회 + 재시도 2회
+_HTTP_TIMEOUT = (3, 1)
 
 
 class _Cancelled(Exception):
     """cancel 이벤트가 set되어 처리를 중단할 때 내부적으로 사용한다."""
+
+
+class _MP4Availability(Enum):
+    AVAILABLE = auto()
+    UNAVAILABLE = auto()
+    UNKNOWN = auto()
 
 
 class Recorder:
@@ -133,49 +145,201 @@ class Recorder:
         on_progress(
             Progress(lesson=lesson, stage="fetching", percent=0.0, message="영상 정보 조회 중")
         )
-        uid = self.client.get_video_uid(course.course_id, lesson.lesson_id)
-        if uid is None:
+        source = self.client.get_video_source(course.course_id, lesson.lesson_id)
+        if source is None:
             on_progress(Progress(lesson=lesson, stage="skipped", percent=0.0, message="영상 없음"))
             raise _SkippedNoVideo()
         if cancel.is_set():
             raise _Cancelled()
 
-        m3u8_url = f"https://videodelivery.net/{uid}/manifest/video.m3u8"
-        raw_path = self._raw_path(course, lesson, final_path)
-        raw_path.parent.mkdir(parents=True, exist_ok=True)
-        raw_part = _part_path(raw_path)
-
-        # 강의에 따라 사이트가 재생시간을 표시하지 않는 경우가 있다.
-        # 그럴 때는 m3u8 매니페스트를 ffprobe로 조회해 진행률 분모를 구한다.
         total_sec = lesson.duration_sec
-        if total_sec is None:
-            total_sec = self._probe_stream_duration(m3u8_url)
 
-        on_progress(
-            Progress(lesson=lesson, stage="downloading", percent=0.0, message="다운로드 중")
+        if self.keep_original:
+            raw_path = self._raw_path(course, lesson, final_path)
+            raw_path.parent.mkdir(parents=True, exist_ok=True)
+            raw_part = _part_path(raw_path)
+            if not self._download_mp4(source.mp4_url, raw_part, lesson, on_progress, cancel):
+                if total_sec is None:
+                    total_sec = self._probe_stream_duration(source.hls_url)
+                self._download_hls(source.hls_url, raw_part, total_sec, lesson, on_progress, cancel)
+            raw_part.replace(raw_path)
+            if total_sec is None:
+                total_sec = self._probe_stream_duration(str(raw_path))
+            self._convert(
+                raw_path,
+                final_path,
+                total_sec,
+                "converting",
+                f"{self.speed}배속 변환 중",
+                lesson,
+                on_progress,
+                cancel,
+            )
+            return
+
+        if self._check_mp4(source.mp4_url) is _MP4Availability.AVAILABLE:
+            if total_sec is None:
+                total_sec = self._probe_stream_duration(source.mp4_url)
+            try:
+                self._convert(
+                    source.mp4_url,
+                    final_path,
+                    total_sec,
+                    "streaming",
+                    f"MP4로 내려받으며 {self.speed}배속 변환 중",
+                    lesson,
+                    on_progress,
+                    cancel,
+                )
+                return
+            except RuntimeError:
+                if self._check_mp4(source.mp4_url) is not _MP4Availability.UNAVAILABLE:
+                    raise
+                _part_path(final_path).unlink(missing_ok=True)
+
+        if total_sec is None:
+            total_sec = self._probe_stream_duration(source.hls_url)
+        self._convert(
+            source.hls_url,
+            final_path,
+            total_sec,
+            "streaming",
+            f"HLS로 내려받으며 {self.speed}배속 변환 중",
+            lesson,
+            on_progress,
+            cancel,
         )
-        download_cmd = [
+
+    @staticmethod
+    def _is_mp4_response(response: requests.Response) -> bool:
+        if response.status_code not in (200, 206):
+            return False
+        content_type = response.headers.get("content-type", "").lower()
+        return not content_type or content_type.startswith(
+            ("video/mp4", "application/octet-stream")
+        )
+
+    def _check_mp4(self, url: str) -> _MP4Availability:
+        try:
+            with requests.get(
+                url,
+                headers={"Range": "bytes=0-0"},
+                stream=True,
+                timeout=_HTTP_TIMEOUT,
+            ) as response:
+                if response.status_code in (401, 403, 404, 405, 410):
+                    return _MP4Availability.UNAVAILABLE
+                if not self._is_mp4_response(response):
+                    if 400 <= response.status_code < 500 and response.status_code not in (408, 429):
+                        return _MP4Availability.UNAVAILABLE
+                    return _MP4Availability.UNKNOWN
+                for chunk in response.iter_content(chunk_size=1):
+                    if chunk:
+                        return _MP4Availability.AVAILABLE
+                return _MP4Availability.UNAVAILABLE
+        except requests.RequestException:
+            return _MP4Availability.UNKNOWN
+
+    def _download_mp4(
+        self,
+        url: str,
+        destination: Path,
+        lesson: Lesson,
+        on_progress: Callable[[Progress], None],
+        cancel: threading.Event,
+    ) -> bool:
+        """MP4를 바로 저장한다. 제공되지 않거나 전송 실패면 False를 반환한다."""
+        try:
+            with requests.get(url, stream=True, timeout=_HTTP_TIMEOUT) as response:
+                if not self._is_mp4_response(response):
+                    destination.unlink(missing_ok=True)
+                    return False
+                total = int(response.headers.get("content-length", 0))
+                downloaded = 0
+                on_progress(
+                    Progress(
+                        lesson=lesson, stage="downloading", percent=0.0, message="MP4 다운로드 중"
+                    )
+                )
+                with destination.open("wb") as output:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if cancel.is_set():
+                            raise _Cancelled()
+                        if not chunk:
+                            continue
+                        output.write(chunk)
+                        downloaded += len(chunk)
+                        percent = downloaded / total * 100 if total else 0.0
+                        on_progress(
+                            Progress(
+                                lesson=lesson,
+                                stage="downloading",
+                                percent=min(100.0, percent),
+                                message="MP4 다운로드 중",
+                            )
+                        )
+                if downloaded == 0 or (total and downloaded != total):
+                    destination.unlink(missing_ok=True)
+                    return False
+                if self._probe_stream_duration(str(destination)) is None:
+                    destination.unlink(missing_ok=True)
+                    return False
+                return True
+        except requests.RequestException:
+            destination.unlink(missing_ok=True)
+            if cancel.is_set():
+                raise _Cancelled() from None
+            return False
+
+    def _download_hls(
+        self,
+        url: str,
+        destination: Path,
+        total_sec: float | None,
+        lesson: Lesson,
+        on_progress: Callable[[Progress], None],
+        cancel: threading.Event,
+    ) -> None:
+        on_progress(
+            Progress(lesson=lesson, stage="downloading", percent=0.0, message="HLS 다운로드 중")
+        )
+        cmd = [
             str(self.ffmpeg),
             "-y",
             "-v",
             "error",
             "-stats",
             "-i",
-            m3u8_url,
+            url,
             "-c",
             "copy",
             "-bsf:a",
             "aac_adtstoasc",
-            str(raw_part),
+            str(destination),
         ]
-        self._run_ffmpeg(download_cmd, total_sec, "downloading", lesson, on_progress, cancel)
-        raw_part.replace(raw_path)
+        self._run_ffmpeg(cmd, total_sec, "downloading", lesson, on_progress, cancel)
 
-        bitrate = self._read_bitrate(raw_path)
-        filter_complex = self._build_filter_complex()
+    def _convert(
+        self,
+        input_source: str | Path,
+        final_path: Path,
+        total_sec: float | None,
+        stage: str,
+        message: str,
+        lesson: Lesson,
+        on_progress: Callable[[Progress], None],
+        cancel: threading.Event,
+    ) -> None:
+        video_filter = f"setpts=PTS/{self.speed}"
+        audio_filter = self._build_audio_filter()
         final_part = _part_path(final_path)
 
         if self._use_videotoolbox:
+            bitrate = (
+                max(_DEFAULT_BITRATE, self._read_bitrate(input_source))
+                if isinstance(input_source, Path)
+                else _DEFAULT_BITRATE
+            )
             video_codec_args = ["-c:v", "h264_videotoolbox", "-b:v", str(bitrate)]
         else:
             video_codec_args = ["-c:v", "libx264", "-crf", "20", "-preset", "veryfast"]
@@ -187,13 +351,11 @@ class Recorder:
             "error",
             "-stats",
             "-i",
-            str(raw_path),
-            "-filter_complex",
-            filter_complex,
-            "-map",
-            "[v]",
-            "-map",
-            "[a]",
+            str(input_source),
+            "-vf",
+            video_filter,
+            "-af",
+            audio_filter,
             *video_codec_args,
             "-c:a",
             "aac",
@@ -201,15 +363,10 @@ class Recorder:
             "128k",
             str(final_part),
         ]
-        on_progress(
-            Progress(lesson=lesson, stage="converting", percent=0.0, message="1.5배속 변환 중")
-        )
+        on_progress(Progress(lesson=lesson, stage=stage, percent=0.0, message=message))
         converted_duration = total_sec / self.speed if total_sec is not None else None
-        self._run_ffmpeg(convert_cmd, converted_duration, "converting", lesson, on_progress, cancel)
+        self._run_ffmpeg(convert_cmd, converted_duration, stage, lesson, on_progress, cancel)
         final_part.replace(final_path)
-
-        if not self.keep_original:
-            raw_path.unlink(missing_ok=True)
 
     # -- 경로 계산 -----------------------------------------------------
 
@@ -245,6 +402,8 @@ class Recorder:
         on_progress: Callable[[Progress], None],
         cancel: threading.Event,
     ) -> None:
+        if cancel.is_set():
+            raise _Cancelled()
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
@@ -252,38 +411,62 @@ class Recorder:
             text=True,
             creationflags=NO_WINDOW,
         )
-        try:
+        assert proc.stderr is not None
+        lines: Queue[str | None] = Queue()
+
+        def read_stderr() -> None:
             buf = ""
+            try:
+                while True:
+                    ch = proc.stderr.read(1)
+                    if ch == "":
+                        if buf:
+                            lines.put(buf)
+                        return
+                    if ch in ("\r", "\n"):
+                        if buf:
+                            lines.put(buf)
+                        buf = ""
+                    else:
+                        buf += ch
+            finally:
+                lines.put(None)
+
+        reader = threading.Thread(target=read_stderr, daemon=True)
+        reader.start()
+        try:
             while True:
-                ch = proc.stderr.read(1)
                 if cancel.is_set():
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
                     raise _Cancelled()
-                if ch == "":
+                try:
+                    line = lines.get(timeout=0.1)
+                except Empty:
+                    continue
+                if line is None:
                     break
-                if ch in ("\r", "\n"):
-                    if buf:
-                        self._report_ffmpeg_line(buf, total_sec, stage, lesson, on_progress)
-                    buf = ""
-                else:
-                    buf += ch
-            if buf:
-                self._report_ffmpeg_line(buf, total_sec, stage, lesson, on_progress)
+                self._report_ffmpeg_line(line, total_sec, stage, lesson, on_progress)
             proc.wait()
         finally:
-            if proc.stderr:
-                proc.stderr.close()
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+            reader.join(timeout=1)
+            proc.stderr.close()
 
         if cancel.is_set():
             raise _Cancelled()
         if proc.returncode != 0:
             raise RuntimeError(f"ffmpeg 실행 실패 (종료 코드 {proc.returncode})")
 
-    _STAGE_LABELS = {"downloading": "내려받는 중", "converting": "변환 중"}
+    _STAGE_LABELS = {
+        "downloading": "내려받는 중",
+        "streaming": "내려받으며 변환 중",
+        "converting": "변환 중",
+    }
 
     @classmethod
     def _report_ffmpeg_line(
@@ -308,7 +491,7 @@ class Recorder:
             message = f"{label} ({_format_elapsed(elapsed)})"
             on_progress(Progress(lesson=lesson, stage=stage, percent=0.0, message=message))
 
-    def _probe_stream_duration(self, m3u8_url: str) -> float | None:
+    def _probe_stream_duration(self, source: str) -> float | None:
         try:
             result = subprocess.run(
                 [
@@ -319,7 +502,7 @@ class Recorder:
                     "format=duration",
                     "-of",
                     "default=nw=1:nk=1",
-                    m3u8_url,
+                    source,
                 ],
                 capture_output=True,
                 text=True,
@@ -331,7 +514,7 @@ class Recorder:
         except Exception:
             return None
 
-    def _read_bitrate(self, path: Path) -> int:
+    def _read_bitrate(self, source: str | Path) -> int:
         for args in (
             ["-select_streams", "v:0", "-show_entries", "stream=bit_rate"],
             ["-show_entries", "format=bit_rate"],
@@ -345,7 +528,7 @@ class Recorder:
                         *args,
                         "-of",
                         "default=nw=1:nk=1",
-                        str(path),
+                        str(source),
                     ],
                     capture_output=True,
                     text=True,
@@ -357,7 +540,7 @@ class Recorder:
                     return max(_MIN_BITRATE, min(_MAX_BITRATE, int(value)))
             except Exception:
                 continue
-        return _MIN_BITRATE * 4  # ffprobe로 읽지 못한 경우의 기본값
+        return _DEFAULT_BITRATE
 
     def _check_videotoolbox(self) -> bool:
         if platform.system() != "Darwin":
@@ -373,10 +556,9 @@ class Recorder:
         except Exception:
             return False
 
-    def _build_filter_complex(self) -> str:
+    def _build_audio_filter(self) -> str:
         factors = _atempo_factors(self.speed)
-        audio_filter = ",".join(f"atempo={factor}" for factor in factors)
-        return f"[0:v]setpts=PTS/{self.speed}[v];[0:a]{audio_filter}[a]"
+        return ",".join(f"atempo={factor}" for factor in factors)
 
 
 class _SkippedNoVideo(Exception):

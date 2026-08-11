@@ -27,10 +27,18 @@ class Lesson:
     global_index: int  # 0부터
 
 
+@dataclass(frozen=True)
+class VideoSource:
+    uid: str
+    mp4_url: str
+    hls_url: str
+
+
 @dataclass
 class Progress:
     lesson: Lesson
-    stage: str  # 'pending'|'fetching'|'downloading'|'converting'|'done'|'skipped'|'error'
+    # pending|fetching|downloading|streaming|converting|done|skipped|error
+    stage: str
     percent: float  # 0~100, 현재 stage 기준
     message: str = ""
 

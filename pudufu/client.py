@@ -1,6 +1,6 @@
 """pudufu.co.kr 웹사이트와 통신하는 클라이언트.
 
-로그인, 내 강의 목록 조회, 강의 목차 조회, 영상 UID 추출을 담당한다.
+로그인, 내 강의 목록 조회, 강의 목차 조회, 영상 소스 주소 추출을 담당한다.
 모두 requests + BeautifulSoup 기반의 SSR HTML 스크래핑이다.
 """
 
@@ -11,7 +11,7 @@ import re
 import requests
 from bs4 import BeautifulSoup
 
-from pudufu.models import Course, Lesson
+from pudufu.models import Course, Lesson, VideoSource
 
 BASE_URL = "https://pudufu.co.kr"
 LOGIN_URL = f"{BASE_URL}/login/validate_login/user?before_url="
@@ -19,7 +19,10 @@ MYPDF_URL = f"{BASE_URL}/home/pdf_mypdf"
 
 # "이어보기" 링크의 href는 두 가지 패턴이 모두 존재한다.
 LECTURE_HREF_RE = re.compile(r"/(?:home/pdf_lecture|lecture)/(\d+)/(\d+)")
-VIDEO_UID_RE = re.compile(r"cloudflarestream\.com/([a-f0-9]{32})")
+VIDEO_URL_RE = re.compile(
+    r"(?:https?:)?//(?P<host>[A-Za-z0-9.-]+cloudflarestream\.com)/(?P<uid>[a-f0-9]{32})"
+)
+CUSTOMER_HOST_RE = re.compile(r"customer-[A-Za-z0-9.-]+cloudflarestream\.com")
 
 
 class LoginError(Exception):
@@ -127,9 +130,52 @@ class PuduFuClient:
             return hours * 3600 + minutes * 60 + seconds
         return None
 
-    def get_video_uid(self, course_id: str, lesson_id: str) -> str | None:
+    def get_video_source(self, course_id: str, lesson_id: str) -> VideoSource | None:
         url = f"{BASE_URL}/lecture/{course_id}/{lesson_id}"
         resp = self.session.get(url, timeout=self.timeout)
         resp.raise_for_status()
-        match = VIDEO_UID_RE.search(resp.text)
-        return match.group(1) if match else None
+        matches = list(VIDEO_URL_RE.finditer(resp.text))
+        if not matches:
+            return None
+        iframe_match = next(
+            (
+                match
+                for iframe in BeautifulSoup(resp.text, "html.parser").find_all("iframe")
+                if (match := VIDEO_URL_RE.search(iframe.get("src", ""))) is not None
+            ),
+            None,
+        )
+        uid = (iframe_match or matches[0]).group("uid")
+        customer_match = next(
+            (
+                item
+                for item in matches
+                if item.group("uid") == uid and item.group("host").startswith("customer-")
+            ),
+            None,
+        )
+        host = customer_match.group("host") if customer_match else self._find_delivery_host(uid)
+        base_url = f"https://{host}/{uid}"
+        return VideoSource(
+            uid=uid,
+            mp4_url=f"{base_url}/downloads/default.mp4",
+            hls_url=f"{base_url}/manifest/video.m3u8",
+        )
+
+    def _find_delivery_host(self, uid: str) -> str:
+        try:
+            response = self.session.get(
+                f"https://iframe.cloudflarestream.com/{uid}", timeout=min(self.timeout, 10)
+            )
+            response.raise_for_status()
+            match = CUSTOMER_HOST_RE.search(response.text)
+            if match:
+                return match.group(0)
+        except requests.RequestException:
+            pass
+        return "videodelivery.net"
+
+    def get_video_uid(self, course_id: str, lesson_id: str) -> str | None:
+        """이전 호출부와의 호환을 위해 영상 UID만 반환한다."""
+        source = self.get_video_source(course_id, lesson_id)
+        return source.uid if source else None

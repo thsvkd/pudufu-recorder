@@ -21,7 +21,8 @@ _STAGE_LABELS = {
     "pending": "대기",
     "fetching": "정보 확인",
     "downloading": "내려받는 중",
-    "converting": "1.5배속 변환 중",
+    "streaming": "내려받으며 변환 중",
+    "converting": "배속 변환 중",
     "done": "완료",
     "skipped": "건너뜀",
     "error": "실패",
@@ -31,6 +32,7 @@ _STAGE_COLORS = {
     "pending": ft.Colors.SURFACE_CONTAINER_HIGHEST,
     "fetching": ft.Colors.PRIMARY_CONTAINER,
     "downloading": ft.Colors.PRIMARY_CONTAINER,
+    "streaming": ft.Colors.PRIMARY_CONTAINER,
     "converting": ft.Colors.PRIMARY_CONTAINER,
     "done": ft.Colors.TERTIARY_CONTAINER,
     "skipped": ft.Colors.SURFACE_CONTAINER_HIGHEST,
@@ -62,7 +64,13 @@ class ProgressScreen:
     """다운로드 진행 상황을 보여주고, 행 단위로만 갱신하는 화면."""
 
     def __init__(
-        self, app: App, course: Course, lessons: list[Lesson], recorder, output_dir: Path
+        self,
+        app: App,
+        course: Course,
+        lessons: list[Lesson],
+        recorder,
+        output_dir: Path,
+        previous_view: ft.Control,
     ) -> None:
         self.app = app
         self.page = app.page
@@ -70,11 +78,13 @@ class ProgressScreen:
         self.lessons = lessons
         self.recorder = recorder
         self.output_dir = output_dir
+        self.previous_view = previous_view
         self.cancel_event = threading.Event()
         self.finished_ids: set[str] = set()
         self.total = len(lessons)
         self.start_time = time.monotonic()
         self.last_summary: Summary | None = None
+        self.return_after_cancel = False
         self.row_controls: dict[str, dict[str, ft.Control]] = {}
 
         self._build()
@@ -88,7 +98,7 @@ class ProgressScreen:
         self.overall_text = ft.Text(f"0/{self.total} 완료")
         self.eta_text = ft.Text("", size=12, color=ft.Colors.ON_SURFACE_VARIANT)
         self.cancel_button = ft.ElevatedButton(
-            "중단", icon=ft.Icons.CANCEL, on_click=self._on_cancel_click
+            "중단하고 돌아가기", icon=ft.Icons.ARROW_BACK, on_click=self._on_cancel_click
         )
 
         rows: list[ft.Control] = []
@@ -180,14 +190,19 @@ class ProgressScreen:
         self.page.update(*changed)
 
     def _on_cancel_click(self, e: ft.ControlEvent) -> None:
+        self.return_after_cancel = True
         self.cancel_event.set()
         self.cancel_button.disabled = True
-        self.cancel_button.text = "중단 중..."
+        self.cancel_button.text = "중단 후 돌아가는 중..."
         self.page.update(self.cancel_button)
 
     # ------------------------------------------------------------------
     def _on_finished(self, summary: Summary) -> None:
         self.last_summary = summary
+        if self.return_after_cancel:
+            self._return_to_previous_view()
+            return
+
         self.cancel_button.visible = False
 
         was_cancelled = (
@@ -207,6 +222,11 @@ class ProgressScreen:
                         "폴더 열기",
                         icon=ft.Icons.FOLDER_OPEN,
                         on_click=lambda e: _open_folder(self.output_dir),
+                    ),
+                    ft.OutlinedButton(
+                        "강의 선택으로 돌아가기",
+                        icon=ft.Icons.ARROW_BACK,
+                        on_click=self._on_back_click,
                     ),
                 ]
             ),
@@ -234,6 +254,12 @@ class ProgressScreen:
         self.summary_area.visible = True
         self.page.update()
 
+    def _on_back_click(self, e: ft.ControlEvent) -> None:
+        self._return_to_previous_view()
+
+    def _return_to_previous_view(self) -> None:
+        self.app.show_view(self.previous_view)
+
     def _on_retry_failed(self, e: ft.ControlEvent) -> None:
         if not self.last_summary or not self.last_summary.errors:
             return
@@ -241,4 +267,4 @@ class ProgressScreen:
         retry_lessons = [item for item in self.lessons if item.title in failed_titles]
         if not retry_lessons:
             return
-        self.app.begin_download(self.course, retry_lessons)
+        self.app.begin_download(self.course, retry_lessons, previous_view=self.previous_view)

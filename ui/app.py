@@ -315,7 +315,9 @@ class App:
     # ------------------------------------------------------------------
     # 다운로드
     # ------------------------------------------------------------------
-    def begin_download(self, course: Course, lessons: list[Lesson]) -> None:
+    def begin_download(
+        self, course: Course, lessons: list[Lesson], previous_view: ft.Control | None = None
+    ) -> None:
         try:
             self.output_dir.mkdir(parents=True, exist_ok=True)
         except OSError as ex:
@@ -346,6 +348,9 @@ class App:
             self.show_snack_bar("코어 모듈(pudufu.recorder)을 아직 찾을 수 없습니다.")
             return
 
+        return_view = previous_view if previous_view is not None else self._content_slot.content
+        if return_view is None:
+            return
         self._current_progress_screen = ProgressScreen(
-            self, course, lessons, recorder, self.output_dir
+            self, course, lessons, recorder, self.output_dir, return_view
         )
