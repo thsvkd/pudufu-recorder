@@ -67,9 +67,8 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from _common import REPO_ROOT, check, fail, info, pyproject_data, pyproject_version
-
 import build as build_script
+from _common import REPO_ROOT, check, fail, info, pyproject_data, pyproject_version
 
 _VERSION_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
 _GUIDE_PATH = REPO_ROOT / "scripts" / "release_notes_guide.md"
